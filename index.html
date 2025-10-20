@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste WebSocket Dashboard</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #333;
+        }
+        .card {
+            background-color: white;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"],
+        input[type="number"] {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        .input-inline {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .input-inline input[type="number"] {
+            width: 80px;
+        }
+        button {
+            background-color: #4a69bd;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover {
+            background-color: #3c58a8;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .dashboard-selector {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .status {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 10px;
+        }
+        .status-disconnected { background-color: #e74c3c; }
+        .status-connecting { background-color: #f39c12; }
+        .status-connected { background-color: #2ecc71; }
+        pre {
+            background-color: #f8f8f8;
+            padding: 15px;
+            border-radius: 4px;
+            overflow: auto;
+            border: 1px solid #ddd;
+            max-height: 400px;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .help-text {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Teste WebSocket Dashboard</h1>
+        
+        <div class="card">
+            <div class="form-group">
+                <label for="token">Token de Autenticação:</label>
+                <input type="text" id="token" placeholder="Cole o token JWT aqui">
+            </div>
+            
+            <div class="controls">
+                <button id="connect-btn">Conectar WebSocket</button>
+                <button id="disconnect-btn" disabled>Desconectar</button>
+            </div>
+            
+            <div class="status">
+                <div id="status-indicator" class="status-indicator status-disconnected"></div>
+                <span id="status-text">Desconectado</span>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2>Selecionar Dashboard</h2>
+            
+            <div class="form-group">
+                <label for="update-interval">Intervalo de Atualização:</label>
+                <div class="input-inline">
+                    <input type="number" id="update-interval" min="5" value="5">
+                    <span>segundos</span>
+                </div>
+                <p class="help-text">O valor mínimo é 5 segundos. Valores menores serão ajustados automaticamente.</p>
+            </div>
+            
+            <div class="dashboard-selector">
+                <button class="dashboard-btn" data-type="general">Geral</button>
+                <button class="dashboard-btn" data-type="printers">Impressoras</button>
+                <button class="dashboard-btn" data-type="servers">Servidores</button>
+                <button class="dashboard-btn" data-type="cloud">Cloud</button>
+            </div>
+            
+            <div class="form-group">
+                <label>Dados Recebidos:</label>
+                <pre id="output">Aguardando dados...</pre>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Elementos do DOM
+        const tokenInput = document.getElementById('token');
+        const updateIntervalInput = document.getElementById('update-interval');
+        const connectBtn = document.getElementById('connect-btn');
+        const disconnectBtn = document.getElementById('disconnect-btn');
+        const statusIndicator = document.getElementById('status-indicator');
+        const statusText = document.getElementById('status-text');
+        const output = document.getElementById('output');
+        const dashboardButtons = document.querySelectorAll('.dashboard-btn');
+        
+        // Variáveis
+        let socket = null;
+        let currentDashboard = null;
+        const MIN_INTERVAL = 5; // 5 segundos mínimo
+        
+        // Funções
+        function updateStatus(status) {
+            statusText.textContent = status;
+            
+            // Atualizar o indicador de status
+            statusIndicator.className = 'status-indicator';
+            switch (status) {
+                case 'Conectado':
+                    statusIndicator.classList.add('status-connected');
+                    connectBtn.disabled = true;
+                    disconnectBtn.disabled = false;
+                    dashboardButtons.forEach(btn => btn.disabled = false);
+                    break;
+                case 'Conectando...':
+                    statusIndicator.classList.add('status-connecting');
+                    connectBtn.disabled = true;
+                    disconnectBtn.disabled = true;
+                    dashboardButtons.forEach(btn => btn.disabled = true);
+                    break;
+                case 'Erro de autenticação':
+                    statusIndicator.classList.add('status-disconnected');
+                    connectBtn.disabled = false;
+                    disconnectBtn.disabled = true;
+                    dashboardButtons.forEach(btn => btn.disabled = true);
+                    break;
+                default:
+                    statusIndicator.classList.add('status-disconnected');
+                    connectBtn.disabled = false;
+                    disconnectBtn.disabled = true;
+                    dashboardButtons.forEach(btn => btn.disabled = true);
+            }
+        }
+        
+        function formatJson(json) {
+            return JSON.stringify(json, null, 2);
+        }
+        
+        function getUpdateIntervalMs() {
+            // Obter valor do input e validar
+            let seconds = parseInt(updateIntervalInput.value);
+            
+            // Garantir valor mínimo
+            if (isNaN(seconds) || seconds < MIN_INTERVAL) {
+                seconds = MIN_INTERVAL;
+                updateIntervalInput.value = MIN_INTERVAL;
+            }
+            
+            // Converter para milissegundos
+            return seconds * 1000;
+        }
+        
+        function connectWebSocket() {
+            // Validar token
+            const token = tokenInput.value.trim();
+            if (!token) {
+                alert('Por favor, insira um token JWT válido');
+                return;
+            }
+            
+            updateStatus('Conectando...');
+            
+            // Criar WebSocket com token na URL
+            const wsUrl = `wss://ws.loqquei.com.br?token=${token}`;
+            
+            // Fechar socket existente
+            if (socket) {
+                socket.close();
+            }
+            
+            // Criar novo socket
+            socket = new WebSocket(wsUrl);
+            
+            // Handlers de eventos
+            socket.onopen = () => {
+                updateStatus('Conectado');
+                console.log('WebSocket conectado');
+            };
+            
+            socket.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    output.textContent = formatJson(data);
+                } catch (error) {
+                    console.error('Erro ao processar mensagem:', error);
+                    output.textContent = `Erro ao processar mensagem: ${error.message}\n\nDados recebidos: ${event.data}`;
+                }
+            };
+            
+            socket.onclose = (event) => {
+                if (event.code === 4001) {
+                    updateStatus('Erro de autenticação');
+                    output.textContent = `Erro de autenticação: ${event.reason || 'Token inválido'}`;
+                } else {
+                    updateStatus('Desconectado');
+                    output.textContent = `Conexão fechada. Código: ${event.code}, Razão: ${event.reason || 'Não especificada'}`;
+                }
+            };
+            
+            socket.onerror = (error) => {
+                updateStatus('Erro na conexão');
+                console.error('Erro na conexão WebSocket:', error);
+                output.textContent = 'Erro na conexão WebSocket. Veja o console para detalhes.';
+            };
+        }
+        
+        function disconnectWebSocket() {
+            if (socket) {
+                socket.close();
+                socket = null;
+            }
+            updateStatus('Desconectado');
+            output.textContent = 'Desconectado do servidor.';
+        }
+        
+        function requestDashboard(type) {
+            if (!socket || socket.readyState !== WebSocket.OPEN) {
+                alert('WebSocket não está conectado. Conecte-se primeiro.');
+                return;
+            }
+            
+            currentDashboard = type;
+            const updateInterval = getUpdateIntervalMs();
+            output.textContent = `Solicitando dashboard ${type} com intervalo de ${updateInterval}ms...`;
+            
+            // Enviar mensagem para solicitar o dashboard com intervalo personalizado
+            socket.send(JSON.stringify({
+                type: 'join_dashboard',
+                dashboardType: type,
+                updateInterval: updateInterval
+            }));
+            
+            // Destacar botão selecionado
+            dashboardButtons.forEach(btn => {
+                if (btn.dataset.type === type) {
+                    btn.style.backgroundColor = '#3c58a8';
+                } else {
+                    btn.style.backgroundColor = '#4a69bd';
+                }
+            });
+        }
+        
+        // Event listeners
+        connectBtn.addEventListener('click', connectWebSocket);
+        disconnectBtn.addEventListener('click', disconnectWebSocket);
+        
+        // Validar intervalo quando o valor mudar
+        updateIntervalInput.addEventListener('change', () => {
+            getUpdateIntervalMs(); // Isso já atualiza o valor no input se necessário
+        });
+        
+        dashboardButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                requestDashboard(btn.dataset.type);
+            });
+            btn.disabled = true; // Inicialmente desabilitado
+        });
+        
+        // Inicialização
+        updateStatus('Desconectado');
+    </script>
+</body>
+</html>
